@@ -8,21 +8,21 @@ from django.db import models
 class Task(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     task_type = models.IntegerField(unique=True)
-    task_desc = models.CharField(max_length=100, unique=True)
-    REMAINDER_FREQUENCY = [
-        ('daily', 'Daily'),
-        ('weekly', 'Weekly'),
-        ('monthly', 'Monthly')
-    ]
-    update_type = models.CharField(max_length=30, choices=REMAINDER_FREQUENCY, default="daily")
+    task_desc = models.CharField(max_length=100)
     created_on = models.DateTimeField(auto_now_add=True)
     last_modified = models.DateTimeField(auto_now=True)
 
 
 class TaskTracker(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    task = models.ForeignKey(Task, on_delete=models.CASCADE)
     email = models.EmailField(max_length=60, null=False)
+    task = models.ForeignKey(Task, on_delete=models.CASCADE)
+    REMAINDER_FREQUENCY = [
+        ('daily', 'Daily'),
+        ('weekly', 'Weekly'),
+        ('monthly', 'Monthly')
+    ]
+    update_type = models.CharField(max_length=30, choices=REMAINDER_FREQUENCY, null=True)
     created_on = models.DateTimeField(auto_now_add=True)
     last_modified = models.DateTimeField(auto_now=True)
 

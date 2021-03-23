@@ -39,7 +39,15 @@ def serialized_data_to_dict(data=None):
 @ratelimit(key='ip', rate='10/m', block=True, method=ratelimit.ALL)
 @csrf_exempt
 def task(request=None):
-    if request.method == "POST":
+    if request.method == "GET":
+        try:
+            tasks=Task.objects.all()
+            tasks=TaskSerializer(tasks, many=True).data
+            return JsonResponse({"data": tasks}, status=200)
+        except Exception as e:
+            print("\n TaskGetError = ", e)
+            return JsonResponse({"error": "Something went wrong"}, status=400)
+    elif request.method == "POST":
         """ to create a new task """
         try:
             try:
@@ -63,11 +71,18 @@ def task(request=None):
             # check whether garbage is sent in 'task_type' parameter
             if task_type not in [1, 2, 3, 4]:
                 return JsonResponse({"error": "Invalid payload"}, status=422)
+            # check whether task_type already exists or not, if exists return error
+            try:
+                Task.objects.get(task_type=task_type)
+                return JsonResponse({"error": "A task already exists with this type"}, status=409)
+            except ObjectDoesNotExist:
+                pass
             # create task
             task = Task.objects.create(task_type=task_type, task_desc=task_desc)
             task = TaskSerializer(task).data
             return JsonResponse({"data": task}, status=200)
-        except Exception:
+        except Exception as e:
+            print("\n TaskCreateError = ", e)
             return JsonResponse({"error": "Something went wrong"}, status=400)
     elif request.method == "PUT":
         """ to update a task """
@@ -92,6 +107,12 @@ def task(request=None):
             # check whether garbage is sent in 'task_type' parameter
             if task_type and task_type not in [1, 2, 3, 4]:
                 return JsonResponse({"error": "Invalid payload"}, status=422)
+            # check whether task type is unique or not
+            try:
+                Task.objects.get(task_type=task_type)
+                return JsonResponse({"error": "This task type already exists"}, status=409)
+            except ObjectDoesNotExist:
+                pass
             # get task
             task = get_task(task_id=task_id)
             if task is None:
@@ -108,8 +129,9 @@ def task(request=None):
             if task is None:
                 return JsonResponse({"error": "No such task exists"}, status=404)
             task = TaskSerializer(task).data
-            return JsonResponse({"datae": task}, status=200)
-        except Exception:
+            return JsonResponse({"data": task}, status=200)
+        except Exception as e:
+            print("\n TaskUpdateError = ", e)
             return JsonResponse({"error": "Something went wrong"}, status=400)
     else:
         return JsonResponse({"error": "Internal Server Error"}, status=500)
@@ -131,9 +153,8 @@ def task_tracker(request=None):
             task_id = data.get("task_id")
             update_type = data.get("update_type")
             email = data.get("email")
-            tracker_description = data.get("tracker_description")
             # check whether all mandatory parameters are received or not
-            if tracker_description is None or task_id is None or update_type is None or email is None or email=='':
+            if task_id is None or update_type is None or email is None or email=='':
                 return JsonResponse({"error": "Missing mandatory fields"}, status=422)
             else:
                 update_type=update_type.strip().lower()
@@ -142,25 +163,28 @@ def task_tracker(request=None):
             # check type of parameters
             if isinstance(task_id, str) is False or isinstance(update_type, str) is False:
                 return JsonResponse({"error": "Invalid Payload"}, status=422)
-            if update_type not in ["weekly", "daily", "monthly", "now"]:
+            if update_type not in ["weekly", "daily", "monthly"]:
                 return JsonResponse({"error": "Invalid payload"}, status=422)
             # get task
             task = get_task(task_id=task_id)
             if task is None:
                 return JsonResponse({"error": "No such task exists"}, status=404)
+            # check whether the user don't have a tracker for requested task, if there is one throw error
+            trackers = TaskTracker.objects.filter(task=task, email=email)
+            if trackers:
+                return JsonResponse({"error": "There exists a tracker for this user for the requested task"}, status=409)
             # create task
-            tracker = TaskTracker.objects.create(task=task, email=email)
-            # update the update also
-            task.update_type=update_type
-            task.save()
+            tracker = TaskTracker.objects.create(task=task, email=email, update_type=update_type)
+            # # update the update also
+            # task.update_type=update_type
+            # task.save()
             # get the tasks data that has to be scheduled
-            tasks = get_task_reports(email=email, task=task, update_type=update_type)
+            tasks = get_task_reports(email=email, update_type=update_type)
             # schedule the job
-            send_email_to_celery_scheduler(email=email, tasks=tasks, tracker_description=tracker_description,
-                                           update_type=update_type)
+            send_email_to_celery_scheduler(email=email, tasks=tasks, update_type=update_type)
             return JsonResponse(tasks, status=200)
         except Exception as e:
-            print("\n Exception = ", e)
+            print("\n TaskTrackerCreateException = ", e)
             if tracker:
                 tracker.delete()
             return JsonResponse({"error": "Something went wrong"}, status=400)
@@ -168,7 +192,7 @@ def task_tracker(request=None):
         return JsonResponse({"error": "Internal Server Error"}, status=500)
 
 
-def get_task_reports(email=None, task=None, update_type=None):
+def get_task_reports(email=None, update_type=None):
     current_datetime = datetime.now()
     if update_type in ["daily", "now"]:
         earlier_datetime=current_datetime - timedelta(hours=24)
@@ -176,7 +200,7 @@ def get_task_reports(email=None, task=None, update_type=None):
         earlier_datetime = current_datetime - timedelta(days=7)
     if update_type=="monthly":
         earlier_datetime = datetime.now() - timedelta(weeks=4)
-    tasks=TaskTracker.objects.filter(email=email, task=task, created_on__range=(earlier_datetime, current_datetime))
+    tasks=TaskTracker.objects.filter(email=email, update_type=update_type, created_on__range=(earlier_datetime, current_datetime))
     tasks=TaskTrackerSerializer(tasks, many=True).data
     tasks=serialized_data_to_dict(data=tasks)
     return {"data": tasks}
